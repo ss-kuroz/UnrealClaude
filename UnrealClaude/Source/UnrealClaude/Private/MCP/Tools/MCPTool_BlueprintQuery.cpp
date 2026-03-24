@@ -364,11 +364,13 @@ FMCPToolResult FMCPTool_BlueprintQuery::ExecuteFindReferences(const TSharedRef<F
 	FString RefType = ExtractOptionalString(Params, TEXT("ref_type")).ToLower();
 	bool bSearchVariables = RefType.IsEmpty() || RefType == TEXT("variable");
 	bool bSearchFunctions = RefType.IsEmpty() || RefType == TEXT("function");
+	int32 Limit = FMath::Clamp(ExtractOptionalNumber<int32>(Params, TEXT("limit"), 100), 1, 1000);
 
 	// Use FName for case-insensitive comparison (FName is case-preserving but compares case-insensitive)
 	FName RefFName(*RefName);
 
 	TArray<TSharedPtr<FJsonValue>> References;
+	int32 TotalMatches = 0;
 
 	// Search all graphs including macros
 	TArray<UEdGraph*> AllGraphs = CollectGraphs(Blueprint, FString());
@@ -408,6 +410,9 @@ FMCPToolResult FMCPTool_BlueprintQuery::ExecuteFindReferences(const TSharedRef<F
 
 			if (bMatched)
 			{
+				TotalMatches++;
+				if (References.Num() >= Limit) continue;
+
 				TSharedPtr<FJsonObject> RefObj = MakeShared<FJsonObject>();
 				RefObj->SetStringField(TEXT("node_id"), FBlueprintGraphEditor::GetNodeId(Node));
 				RefObj->SetStringField(TEXT("node_guid"), Node->NodeGuid.ToString());
@@ -426,7 +431,8 @@ FMCPToolResult FMCPTool_BlueprintQuery::ExecuteFindReferences(const TSharedRef<F
 	Result->SetStringField(TEXT("ref_type"), RefType.IsEmpty() ? TEXT("any") : *RefType);
 	Result->SetArrayField(TEXT("references"), References);
 	Result->SetNumberField(TEXT("count"), References.Num());
+	Result->SetNumberField(TEXT("total_matches"), TotalMatches);
 
 	return FMCPToolResult::Success(
-		FString::Printf(TEXT("Found %d references to '%s'"), References.Num(), *RefName), Result);
+		FString::Printf(TEXT("Found %d references to '%s' (showing %d)"), TotalMatches, *RefName, References.Num()), Result);
 }
