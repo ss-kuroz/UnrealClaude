@@ -2,10 +2,13 @@
 
 #include "MCPTool_BlueprintQuery.h"
 #include "BlueprintUtils.h"
+#include "BlueprintGraphEditor.h"
 #include "MCP/MCPParamValidator.h"
 #include "UnrealClaudeModule.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Engine/Blueprint.h"
+#include "K2Node_Variable.h"
+#include "K2Node_CallFunction.h"
 
 FMCPToolResult FMCPTool_BlueprintQuery::Execute(const TSharedRef<FJsonObject>& Params)
 {
@@ -31,10 +34,113 @@ FMCPToolResult FMCPTool_BlueprintQuery::Execute(const TSharedRef<FJsonObject>& P
 	{
 		return ExecuteGetGraph(Params);
 	}
+	else if (Operation == TEXT("get_nodes"))
+	{
+		return ExecuteGetNodes(Params);
+	}
+	else if (Operation == TEXT("get_variables"))
+	{
+		return ExecuteGetVariables(Params);
+	}
+	else if (Operation == TEXT("get_functions"))
+	{
+		return ExecuteGetFunctions(Params);
+	}
+	else if (Operation == TEXT("get_node_pins"))
+	{
+		return ExecuteGetNodePins(Params);
+	}
+	else if (Operation == TEXT("search_nodes"))
+	{
+		return ExecuteSearchNodes(Params);
+	}
+	else if (Operation == TEXT("find_references"))
+	{
+		return ExecuteFindReferences(Params);
+	}
 
 	return FMCPToolResult::Error(FString::Printf(
-		TEXT("Unknown operation: '%s'. Valid operations: 'list', 'inspect', 'get_graph'"), *Operation));
+		TEXT("Unknown operation: '%s'. Valid operations: 'list', 'inspect', 'get_graph', 'get_nodes', 'get_variables', 'get_functions', 'get_node_pins', 'search_nodes', 'find_references'"), *Operation));
 }
+
+// --- Shared helpers ---
+
+UBlueprint* FMCPTool_BlueprintQuery::LoadAndValidateBlueprint(const TSharedRef<FJsonObject>& Params)
+{
+	FString BlueprintPath;
+	TOptional<FMCPToolResult> Error;
+	if (!ExtractRequiredString(Params, TEXT("blueprint_path"), BlueprintPath, Error))
+	{
+		LastError = Error.GetValue();
+		return nullptr;
+	}
+
+	FString ValidationError;
+	if (!FMCPParamValidator::ValidateBlueprintPath(BlueprintPath, ValidationError))
+	{
+		LastError = FMCPToolResult::Error(ValidationError);
+		return nullptr;
+	}
+
+	FString LoadError;
+	UBlueprint* Blueprint = FBlueprintUtils::LoadBlueprint(BlueprintPath, LoadError);
+	if (!Blueprint)
+	{
+		LastError = FMCPToolResult::Error(LoadError);
+		return nullptr;
+	}
+
+	return Blueprint;
+}
+
+TArray<UEdGraph*> FMCPTool_BlueprintQuery::CollectGraphs(UBlueprint* Blueprint, const FString& GraphName)
+{
+	TArray<UEdGraph*> Graphs;
+	if (!GraphName.IsEmpty())
+	{
+		FString FindError;
+		UEdGraph* Graph = FBlueprintGraphEditor::FindGraph(Blueprint, GraphName, true, FindError);
+		if (!Graph) Graph = FBlueprintGraphEditor::FindGraph(Blueprint, GraphName, false, FindError);
+		if (Graph) Graphs.Add(Graph);
+	}
+	else
+	{
+		Graphs.Append(Blueprint->UbergraphPages);
+		Graphs.Append(Blueprint->FunctionGraphs);
+		Graphs.Append(Blueprint->MacroGraphs);
+	}
+	return Graphs;
+}
+
+UEdGraphNode* FMCPTool_BlueprintQuery::FindNodeInGraphs(
+	const TArray<UEdGraph*>& Graphs, const FString& NodeId, FString& OutGraphName)
+{
+	for (UEdGraph* Graph : Graphs)
+	{
+		if (!Graph) continue;
+
+		// Try MCP ID first
+		UEdGraphNode* Node = FBlueprintGraphEditor::FindNodeById(Graph, NodeId);
+		if (Node)
+		{
+			OutGraphName = Graph->GetName();
+			return Node;
+		}
+
+		// Fallback: try matching NodeGuid
+		for (UEdGraphNode* N : Graph->Nodes)
+		{
+			if (N && N->NodeGuid.ToString() == NodeId)
+			{
+				OutGraphName = Graph->GetName();
+				return N;
+			}
+		}
+	}
+	return nullptr;
+}
+
+// --- Existing operations ---
 
 FMCPToolResult FMCPTool_BlueprintQuery::ExecuteList(const TSharedRef<FJsonObject>& Params)
 {
@@ -246,4 +352,36 @@ FMCPToolResult FMCPTool_BlueprintQuery::ExecuteGetGraph(const TSharedRef<FJsonOb
 		FString::Printf(TEXT("Graph info for: %s"), *Blueprint->GetName()),
 		GraphInfo
 	);
+}
+
+// --- New operation stubs (to be implemented in subsequent tasks) ---
+
+FMCPToolResult FMCPTool_BlueprintQuery::ExecuteGetNodes(const TSharedRef<FJsonObject>& Params)
+{
+	return FMCPToolResult::Error(TEXT("get_nodes: Not yet implemented"));
+}
+
+FMCPToolResult FMCPTool_BlueprintQuery::ExecuteGetVariables(const TSharedRef<FJsonObject>& Params)
+{
+	return FMCPToolResult::Error(TEXT("get_variables: Not yet implemented"));
+}
+
+FMCPToolResult FMCPTool_BlueprintQuery::ExecuteGetFunctions(const TSharedRef<FJsonObject>& Params)
+{
+	return FMCPToolResult::Error(TEXT("get_functions: Not yet implemented"));
+}
+
+FMCPToolResult FMCPTool_BlueprintQuery::ExecuteGetNodePins(const TSharedRef<FJsonObject>& Params)
+{
+	return FMCPToolResult::Error(TEXT("get_node_pins: Not yet implemented"));
+}
+
+FMCPToolResult FMCPTool_BlueprintQuery::ExecuteSearchNodes(const TSharedRef<FJsonObject>& Params)
+{
+	return FMCPToolResult::Error(TEXT("search_nodes: Not yet implemented"));
+}
+
+FMCPToolResult FMCPTool_BlueprintQuery::ExecuteFindReferences(const TSharedRef<FJsonObject>& Params)
+{
+	return FMCPToolResult::Error(TEXT("find_references: Not yet implemented"));
 }
