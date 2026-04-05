@@ -427,7 +427,13 @@ void SClaudeEditorWidget::OnClaudeResponse(const FString& Response, bool bSucces
 	else
 	{
 		FinalizeStreamingResponse();
-		AddMessage(FString::Printf(TEXT("Error: %s"), *Response), false);
+		// Only show error message if there's actual error text to display.
+		// Refusals produce an empty response (AccumulatedResponseText was cleared)
+		// and already show a banner via HandleRefusalEvent, so skip the redundant message.
+		if (!Response.IsEmpty())
+		{
+			AddMessage(FString::Printf(TEXT("Error: %s"), *Response), false);
+		}
 	}
 
 	// Clear streaming state
