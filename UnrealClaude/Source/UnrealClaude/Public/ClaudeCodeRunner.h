@@ -85,6 +85,13 @@ private:
 	FRunnableThread* Thread;
 	FThreadSafeCounter StopTaskCounter;
 	TAtomic<bool> bIsExecuting;
+	TAtomic<bool> bRefusalDetected{false};
+
+public:
+	/** Check if the last execution was refused by streaming safety classifiers */
+	bool WasRefused() const { return bRefusalDetected.Load(); }
+
+private:
 
 	// Process handle (FProcHandle stored as void* for atomic exchange compatibility)
 	FProcHandle ProcessHandle;

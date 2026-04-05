@@ -24,6 +24,8 @@ enum class EClaudeStreamEventType : uint8
 	ToolResult,
 	/** Final result with stats and cost */
 	Result,
+	/** Streaming refusal - response was refused by safety classifiers */
+	Refusal,
 	/** Raw assistant message (full message, not parsed into sub-events) */
 	AssistantMessage,
 	/** Unknown or unparsed event type */
@@ -56,6 +58,9 @@ struct UNREALCLAUDE_API FClaudeStreamEvent
 
 	/** Session ID (for SessionInit/Result events) */
 	FString SessionId;
+
+	/** Stop reason from the API (e.g., "end_turn", "refusal", "tool_use") */
+	FString StopReason;
 
 	/** Whether this is an error event */
 	bool bIsError = false;

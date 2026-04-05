@@ -427,7 +427,13 @@ void SClaudeEditorWidget::OnClaudeResponse(const FString& Response, bool bSucces
 	else
 	{
 		FinalizeStreamingResponse();
-		AddMessage(FString::Printf(TEXT("Error: %s"), *Response), false);
+		// Only show error message if there's actual error text to display.
+		// Refusals produce an empty response (AccumulatedResponseText was cleared)
+		// and already show a banner via HandleRefusalEvent, so skip the redundant message.
+		if (!Response.IsEmpty())
+		{
+			AddMessage(FString::Printf(TEXT("Error: %s"), *Response), false);
+		}
 	}
 
 	// Clear streaming state
@@ -745,6 +751,11 @@ void SClaudeEditorWidget::OnClaudeStreamEvent(const FClaudeStreamEvent& Event)
 		HandleResultEvent(Event);
 		break;
 
+	case EClaudeStreamEventType::Refusal:
+		UE_LOG(LogUnrealClaude, Warning, TEXT("[StreamEvent] Refusal: stop_reason=%s"), *Event.StopReason);
+		HandleRefusalEvent(Event);
+		break;
+
 	default:
 		UE_LOG(LogUnrealClaude, Log, TEXT("[StreamEvent] Unknown type: %d"), static_cast<int32>(Event.Type));
 		break;
@@ -1054,6 +1065,43 @@ void SClaudeEditorWidget::HandleResultEvent(const FClaudeStreamEvent& Event)
 		.TextStyle(FAppStyle::Get(), "SmallText")
 		.ColorAndOpacity(FSlateColor(FLinearColor(0.4f, 0.4f, 0.45f)))
 	];
+
+	if (ChatScrollBox.IsValid())
+	{
+		ChatScrollBox->ScrollToEnd();
+	}
+}
+
+void SClaudeEditorWidget::HandleRefusalEvent(const FClaudeStreamEvent& Event)
+{
+	if (!StreamingContentBox.IsValid())
+	{
+		return;
+	}
+
+	// Display a refusal notice in the streaming content box
+	FString RefusalMessage = TEXT("Response refused by content safety filter. Please rephrase your request.");
+
+	StreamingContentBox->AddSlot()
+	.AutoHeight()
+	.Padding(0, 8, 0, 4)
+	[
+		SNew(SBorder)
+		.BorderImage(FAppStyle::GetBrush("ToolPanel.DarkGroupBorder"))
+		.BorderBackgroundColor(FLinearColor(0.3f, 0.08f, 0.08f, 1.0f))
+		.Padding(FMargin(10.0f, 8.0f))
+		[
+			SNew(STextBlock)
+			.Text(FText::FromString(RefusalMessage))
+			.TextStyle(FAppStyle::Get(), "SmallText")
+			.ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.5f, 0.5f)))
+			.AutoWrapText(true)
+		]
+	];
+
+	// The refused turn is prevented from being saved to history because
+	// bRefusalDetected causes bSuccess=false in the completion callback,
+	// which skips AddExchange. No need to clear prior valid history.
 
 	if (ChatScrollBox.IsValid())
 	{

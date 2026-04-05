@@ -83,6 +83,9 @@ public:
 	/** Clear conversation history */
 	void ClearHistory();
 
+	/** Reset session completely (clear in-memory history and delete session file from disk) */
+	void ResetSession();
+
 	/** Cancel current request */
 	void CancelCurrentRequest();
 

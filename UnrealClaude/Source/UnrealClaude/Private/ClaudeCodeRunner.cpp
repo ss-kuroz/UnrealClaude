@@ -550,7 +550,8 @@ FString FClaudeCodeRunner::ParseStreamJsonOutput(const FString& RawOutput)
 	TArray<FString> Lines;
 	RawOutput.ParseIntoArrayLines(Lines);
 
-	// First pass: look for the "result" message
+	// First pass: check for refusal (must take priority) and look for result message
+	FString FoundResultText;
 	for (const FString& Line : Lines)
 	{
 		if (Line.IsEmpty())
@@ -571,15 +572,41 @@ FString FClaudeCodeRunner::ParseStreamJsonOutput(const FString& RawOutput)
 			continue;
 		}
 
-		if (Type == TEXT("result"))
+		// Check for refusal in assistant messages (stop_reason in message object)
+		if (Type == TEXT("assistant"))
 		{
-			FString ResultText;
-			if (JsonObj->TryGetStringField(TEXT("result"), ResultText))
+			const TSharedPtr<FJsonObject>* MessageObj;
+			if (JsonObj->TryGetObjectField(TEXT("message"), MessageObj))
 			{
-				UE_LOG(LogUnrealClaude, Log, TEXT("Parsed stream-json result: %d chars"), ResultText.Len());
-				return ResultText;
+				FString StopReason;
+				if ((*MessageObj)->TryGetStringField(TEXT("stop_reason"), StopReason) && StopReason == TEXT("refusal"))
+				{
+					UE_LOG(LogUnrealClaude, Warning, TEXT("ParseStreamJsonOutput: Detected refusal in assistant message"));
+					return TEXT("Error: Response refused by content safety filter. Please rephrase your request.");
+				}
 			}
 		}
+
+		// Check for refusal in result events (stop_reason at top level)
+		if (Type == TEXT("result"))
+		{
+			FString StopReason;
+			if (JsonObj->TryGetStringField(TEXT("stop_reason"), StopReason) && StopReason == TEXT("refusal"))
+			{
+				UE_LOG(LogUnrealClaude, Warning, TEXT("ParseStreamJsonOutput: Detected refusal in result event"));
+				return TEXT("Error: Response refused by content safety filter. Please rephrase your request.");
+			}
+
+			// Not a refusal — save the result text for later
+			JsonObj->TryGetStringField(TEXT("result"), FoundResultText);
+		}
+	}
+
+	// Return the result text if found (no refusal detected)
+	if (!FoundResultText.IsEmpty())
+	{
+		UE_LOG(LogUnrealClaude, Log, TEXT("Parsed stream-json result: %d chars"), FoundResultText.Len());
+		return FoundResultText;
 	}
 
 	// Fallback: accumulate text from assistant content blocks
@@ -699,6 +726,34 @@ void FClaudeCodeRunner::ParseAndEmitNdjsonLine(const FString& JsonLine)
 		if (!JsonObj->TryGetObjectField(TEXT("message"), MessageObj))
 		{
 			UE_LOG(LogUnrealClaude, Warning, TEXT("NDJSON: assistant message missing 'message' field"));
+			return;
+		}
+
+		// Check for stop_reason: "refusal" - streaming classifiers intervened
+		FString StopReason;
+		(*MessageObj)->TryGetStringField(TEXT("stop_reason"), StopReason);
+		if (StopReason == TEXT("refusal"))
+		{
+			UE_LOG(LogUnrealClaude, Warning, TEXT("NDJSON: Streaming refusal detected (stop_reason=refusal)"));
+
+			bRefusalDetected.Store(true);
+			AccumulatedResponseText.Empty();
+
+			if (CurrentConfig.OnStreamEvent.IsBound())
+			{
+				FClaudeStreamEvent Event;
+				Event.Type = EClaudeStreamEventType::Refusal;
+				Event.StopReason = StopReason;
+				Event.bIsError = true;
+				Event.RawJson = JsonLine;
+				FOnClaudeStreamEvent EventDelegate = CurrentConfig.OnStreamEvent;
+				AsyncTask(ENamedThreads::GameThread, [EventDelegate, Event]()
+				{
+					EventDelegate.ExecuteIfBound(Event);
+				});
+			}
+
+			// Do not parse content blocks from a refused message
 			return;
 		}
 
@@ -895,14 +950,50 @@ void FClaudeCodeRunner::ParseAndEmitNdjsonLine(const FString& JsonLine)
 		double TotalCostUsd = 0.0;
 		JsonObj->TryGetNumberField(TEXT("total_cost_usd"), TotalCostUsd);
 
-		UE_LOG(LogUnrealClaude, Log, TEXT("NDJSON Result: subtype=%s, is_error=%d, duration=%.0fms, turns=%.0f, cost=$%.4f, result=%d chars"),
-			*Subtype, bIsError, DurationMs, NumTurns, TotalCostUsd, ResultText.Len());
+		// Check for stop_reason in the result event
+		FString StopReason;
+		JsonObj->TryGetStringField(TEXT("stop_reason"), StopReason);
+
+		UE_LOG(LogUnrealClaude, Log, TEXT("NDJSON Result: subtype=%s, is_error=%d, stop_reason=%s, duration=%.0fms, turns=%.0f, cost=$%.4f, result=%d chars"),
+			*Subtype, bIsError, *StopReason, DurationMs, NumTurns, TotalCostUsd, ResultText.Len());
+
+		// If the result carries a refusal stop_reason, emit a Refusal event
+		// only if one wasn't already emitted from the assistant message
+		if (StopReason == TEXT("refusal"))
+		{
+			if (!bRefusalDetected.Load())
+			{
+				UE_LOG(LogUnrealClaude, Warning, TEXT("NDJSON: Refusal detected in result event (stop_reason=refusal)"));
+
+				bRefusalDetected.Store(true);
+				AccumulatedResponseText.Empty();
+
+				if (CurrentConfig.OnStreamEvent.IsBound())
+				{
+					FClaudeStreamEvent RefusalEvent;
+					RefusalEvent.Type = EClaudeStreamEventType::Refusal;
+					RefusalEvent.StopReason = StopReason;
+					RefusalEvent.bIsError = true;
+					RefusalEvent.RawJson = JsonLine;
+					FOnClaudeStreamEvent EventDelegate = CurrentConfig.OnStreamEvent;
+					AsyncTask(ENamedThreads::GameThread, [EventDelegate, RefusalEvent]()
+					{
+						EventDelegate.ExecuteIfBound(RefusalEvent);
+					});
+				}
+			}
+			else
+			{
+				UE_LOG(LogUnrealClaude, Log, TEXT("NDJSON: Refusal in result event (already handled from assistant message)"));
+			}
+		}
 
 		if (CurrentConfig.OnStreamEvent.IsBound())
 		{
 			FClaudeStreamEvent Event;
 			Event.Type = EClaudeStreamEventType::Result;
 			Event.ResultText = ResultText;
+			Event.StopReason = StopReason;
 			Event.bIsError = bIsError;
 			Event.DurationMs = static_cast<int32>(DurationMs);
 			Event.NumTurns = static_cast<int32>(NumTurns);
@@ -939,6 +1030,7 @@ bool FClaudeCodeRunner::Init()
 {
 	// bIsExecuting is already set by ExecuteAsync (thread-safe)
 	StopTaskCounter.Reset();
+	bRefusalDetected.Store(false);
 	NdjsonLineBuffer.Empty();
 	AccumulatedResponseText.Empty();
 	return true;
@@ -1244,7 +1336,8 @@ void FClaudeCodeRunner::ExecuteProcess()
 	FPlatformProcess::CloseProc(ProcessHandle);
 
 	// Report completion with parsed response text
-	bool bSuccess = (ExitCode == 0) && !StopTaskCounter.GetValue();
+	// A refusal is treated as a failure to prevent the refused exchange from being saved
+	bool bSuccess = (ExitCode == 0) && !StopTaskCounter.GetValue() && !bRefusalDetected.Load();
 	ReportCompletion(ResponseText, bSuccess);
 }
 

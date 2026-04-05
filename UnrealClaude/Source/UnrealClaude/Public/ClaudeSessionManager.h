@@ -22,6 +22,9 @@ public:
 	/** Clear conversation history (in memory only) */
 	void ClearHistory();
 
+	/** Delete the session file from disk */
+	void DeleteSessionFile();
+
 	/** Save current session to disk */
 	bool SaveSession();
 

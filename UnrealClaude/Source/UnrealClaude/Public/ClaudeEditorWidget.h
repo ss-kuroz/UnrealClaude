@@ -194,6 +194,9 @@ private:
 	/** Handle a Result stream event (append stats footer) */
 	void HandleResultEvent(const FClaudeStreamEvent& Event);
 
+	/** Handle a Refusal stream event (display refusal message, reset context) */
+	void HandleRefusalEvent(const FClaudeStreamEvent& Event);
+
 	/** Update tool group summary text based on pending/completed state */
 	void UpdateToolGroupSummary();
 

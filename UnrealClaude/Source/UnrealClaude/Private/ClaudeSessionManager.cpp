@@ -29,6 +29,16 @@ void FClaudeSessionManager::ClearHistory()
 	ConversationHistory.Empty();
 }
 
+void FClaudeSessionManager::DeleteSessionFile()
+{
+	FString SessionPath = GetSessionFilePath();
+	if (IFileManager::Get().FileExists(*SessionPath))
+	{
+		IFileManager::Get().Delete(*SessionPath);
+		UE_LOG(LogUnrealClaude, Log, TEXT("Session file deleted: %s"), *SessionPath);
+	}
+}
+
 FString FClaudeSessionManager::GetSessionFilePath() const
 {
 	FString SaveDir = FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("UnrealClaude"));

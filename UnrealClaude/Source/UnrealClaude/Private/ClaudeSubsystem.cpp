@@ -194,6 +194,15 @@ void FClaudeCodeSubsystem::ClearHistory()
 	}
 }
 
+void FClaudeCodeSubsystem::ResetSession()
+{
+	if (SessionManager.IsValid())
+	{
+		SessionManager->ClearHistory();
+		SessionManager->DeleteSessionFile();
+	}
+}
+
 void FClaudeCodeSubsystem::CancelCurrentRequest()
 {
 	if (Runner.IsValid())
