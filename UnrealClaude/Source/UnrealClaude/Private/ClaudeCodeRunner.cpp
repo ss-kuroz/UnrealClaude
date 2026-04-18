@@ -1226,6 +1226,7 @@ bool FClaudeCodeRunner::LaunchProcess(const FString& FullCommand, const FString&
 	bSilenceBannerLatched.Store(false);
 	bHangDiagnosticLogged.Store(false);
 	LastPipeActivityMillis.Store(static_cast<int64>(FPlatformTime::Seconds() * 1000.0));
+	LastStdinPayload.Empty();
 
 	return true;
 }
