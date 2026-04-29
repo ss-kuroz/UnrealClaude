@@ -4,6 +4,7 @@
 #include "ClipboardImageUtils.h"
 #include "UnrealClaudeConstants.h"
 #include "UnrealClaudeModule.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "Widgets/Images/SImage.h"
@@ -16,6 +17,7 @@
 #include "Styling/AppStyle.h"
 #include "Brushes/SlateDynamicImageBrush.h"
 #include "HAL/PlatformApplicationMisc.h"
+#include "HAL/PlatformTime.h"
 #include "Misc/FileHelper.h"
 #include "IImageWrapperModule.h"
 #include "IImageWrapper.h"
@@ -65,9 +67,10 @@ void SClaudeInputArea::Construct(const FArguments& InArgs)
 						.HintText(LOCTEXT("InputHint", "Ask Claude about Unreal Engine 5.7... (Shift+Enter for newline)"))
 						.AutoWrapText(true)
 						.AllowMultiLine(true)
+						.ClearKeyboardFocusOnCommit(false)
+						.ModiferKeyForNewLine(EModifierKey::Shift)
 						.OnTextChanged(this, &SClaudeInputArea::HandleTextChanged)
 						.OnTextCommitted(this, &SClaudeInputArea::HandleTextCommitted)
-						.OnKeyDownHandler(this, &SClaudeInputArea::OnInputKeyDown)
 						.IsEnabled_Lambda([this]() { return !bIsWaiting.Get(); })
 					]
 				]
@@ -81,7 +84,7 @@ void SClaudeInputArea::Construct(const FArguments& InArgs)
 			[
 				SNew(SVerticalBox)
 
-				// Paste from clipboard button
+				// Paste from clipboard button (not focusable to preserve IME state)
 				+ SVerticalBox::Slot()
 				.AutoHeight()
 				.Padding(0.0f, 0.0f, 0.0f, 4.0f)
@@ -91,9 +94,10 @@ void SClaudeInputArea::Construct(const FArguments& InArgs)
 					.OnClicked(this, &SClaudeInputArea::HandlePasteClicked)
 					.ToolTipText(LOCTEXT("PasteTip", "Paste text or image from clipboard"))
 					.IsEnabled_Lambda([this]() { return !bIsWaiting.Get(); })
+					.IsFocusable(false)
 				]
 
-				// Send/Cancel button
+				// Send/Cancel button (not focusable to preserve IME state)
 				+ SVerticalBox::Slot()
 				.AutoHeight()
 				[
@@ -101,6 +105,7 @@ void SClaudeInputArea::Construct(const FArguments& InArgs)
 					.Text_Lambda([this]() { return bIsWaiting.Get() ? LOCTEXT("Cancel", "Cancel") : LOCTEXT("Send", "Send"); })
 					.OnClicked(this, &SClaudeInputArea::HandleSendCancelClicked)
 					.ButtonStyle(FAppStyle::Get(), "PrimaryButton")
+					.IsFocusable(false)
 				]
 			]
 		]
@@ -184,42 +189,45 @@ void SClaudeInputArea::RemoveAttachedImage(int32 Index)
 	}
 }
 
-FReply SClaudeInputArea::OnInputKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent)
+void SClaudeInputArea::SetFocusToInputBox()
 {
-	// Ctrl+V: try image paste first, fall back to text paste
-	if (InKeyEvent.GetKey() == EKeys::V && InKeyEvent.IsControlDown())
+	if (InputTextBox.IsValid())
 	{
-		if (TryPasteImageFromClipboard())
-		{
-			return FReply::Handled();
-		}
-		// Return unhandled to let default text paste proceed
-		return FReply::Unhandled();
+		FSlateApplication::Get().SetUserFocus(0, InputTextBox.ToSharedRef(), EFocusCause::SetDirectly);
 	}
-
-	// Enter (without Shift) to send
-	// Shift+Enter allows newline
-	if (InKeyEvent.GetKey() == EKeys::Enter)
-	{
-		if (!InKeyEvent.IsShiftDown())
-		{
-			OnSend.ExecuteIfBound();
-			return FReply::Handled();
-		}
-	}
-
-	return FReply::Unhandled();
 }
 
 void SClaudeInputArea::HandleTextChanged(const FText& NewText)
 {
 	CurrentInputText = NewText.ToString();
+	LastTextChangeTime = FPlatformTime::Seconds();
 	OnTextChangedDelegate.ExecuteIfBound(CurrentInputText);
 }
 
 void SClaudeInputArea::HandleTextCommitted(const FText& NewText, ETextCommit::Type CommitType)
 {
-	// Don't send on commit - use explicit Enter key handling
+	// Send message when Enter is pressed (OnEnter commit type)
+	// Shift+Enter creates newline and doesn't trigger OnEnter
+	// IME composition confirmation also triggers OnEnter, but it happens immediately after
+	// text change (within ~50ms). Normal typing has a longer gap between text change and Enter.
+	// We detect IME composition by checking if text changed very recently.
+	if (CommitType == ETextCommit::OnEnter)
+	{
+		const double CurrentTime = FPlatformTime::Seconds();
+		const double TimeSinceLastChange = CurrentTime - LastTextChangeTime;
+
+		// If text changed within 100ms, likely IME composition confirmation - don't send
+		if (TimeSinceLastChange < 0.1)
+		{
+			// IME composition confirmation - reset timestamp and don't send
+			LastTextChangeTime = 0.0;
+		}
+		else if (!CurrentInputText.IsEmpty() && !bIsWaiting.Get())
+		{
+			// Normal Enter press - send the message
+			OnSend.ExecuteIfBound();
+		}
+	}
 }
 
 FReply SClaudeInputArea::HandlePasteClicked()
@@ -230,15 +238,14 @@ FReply SClaudeInputArea::HandlePasteClicked()
 		return FReply::Handled();
 	}
 
-	// Fall back to text paste
+	// Simple text paste - use InsertTextAtCursor
 	FString ClipboardText;
 	FPlatformApplicationMisc::ClipboardPaste(ClipboardText);
 	if (!ClipboardText.IsEmpty() && InputTextBox.IsValid())
 	{
-		// Append to existing text
-		FString NewText = CurrentInputText + ClipboardText;
-		SetText(NewText);
+		InputTextBox->InsertTextAtCursor(ClipboardText);
 	}
+
 	return FReply::Handled();
 }
 
@@ -252,6 +259,8 @@ FReply SClaudeInputArea::HandleSendCancelClicked()
 	{
 		OnSend.ExecuteIfBound();
 	}
+
+	// Since button is not focusable, focus stays on text box - no need to restore
 	return FReply::Handled();
 }
 
@@ -360,6 +369,7 @@ void SClaudeInputArea::RebuildImagePreviewStrip()
 					})
 					.ToolTipText(LOCTEXT("RemoveImageTip", "Remove this image"))
 					.ButtonStyle(FAppStyle::Get(), "SimpleButton")
+					.IsFocusable(false)
 				]
 			]
 		];
