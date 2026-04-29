@@ -16,8 +16,10 @@ void SClaudeToolbar::Construct(const FArguments& InArgs)
 	bUE57ContextEnabled = InArgs._bUE57ContextEnabled;
 	bProjectContextEnabled = InArgs._bProjectContextEnabled;
 	bRestoreEnabled = InArgs._bRestoreEnabled;
+	bSelectionMode = InArgs._bSelectionMode;
 	OnUE57ContextChanged = InArgs._OnUE57ContextChanged;
 	OnProjectContextChanged = InArgs._OnProjectContextChanged;
+	OnSelectionModeChanged = InArgs._OnSelectionModeChanged;
 	OnRefreshContext = InArgs._OnRefreshContext;
 	OnRestoreSession = InArgs._OnRestoreSession;
 	OnNewSession = InArgs._OnNewSession;
@@ -139,6 +141,30 @@ void SClaudeToolbar::Construct(const FArguments& InArgs)
 				.Text(LOCTEXT("Copy", "Copy Last"))
 				.OnClicked_Lambda([this]() { OnCopyLast.ExecuteIfBound(); return FReply::Handled(); })
 				.ToolTipText(LOCTEXT("CopyTip", "Copy last response to clipboard"))
+			]
+
+			// Selection mode toggle button (at the far right)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(8.0f, 0.0f, 0.0f, 0.0f)
+			[
+				SNew(SButton)
+				.Text_Lambda([this]() {
+					return bSelectionMode.Get()
+						? LOCTEXT("ShowFormatted", "Formatted")
+						: LOCTEXT("ShowSelectText", "Plain Text");
+				})
+				.OnClicked_Lambda([this]() {
+					// Toggle between modes
+					OnSelectionModeChanged.ExecuteIfBound(!bSelectionMode.Get());
+					return FReply::Handled();
+				})
+				.ToolTipText_Lambda([this]() {
+					return bSelectionMode.Get()
+						? LOCTEXT("ShowFormattedTip", "Switch to formatted markdown view")
+						: LOCTEXT("ShowSelectTextTip", "Switch to plain text for easy selection and copying");
+				})
 			]
 		]
 	];

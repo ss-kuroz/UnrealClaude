@@ -58,10 +58,10 @@ public:
 	/** Remove a specific attached image by index */
 	void RemoveAttachedImage(int32 Index);
 
-private:
-	/** Handle key down in input box */
-	FReply OnInputKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent);
+	/** Set focus to the input text box (for IME support) */
+	void SetFocusToInputBox();
 
+private:
 	/** Handle text change */
 	void HandleTextChanged(const FText& NewText);
 
@@ -98,6 +98,9 @@ private:
 
 	/** Dynamic brushes for thumbnails (must outlive the SImage widgets) */
 	TArray<TSharedPtr<FSlateDynamicImageBrush>> ThumbnailBrushes;
+
+	/** Timestamp of last text change (used to detect IME composition confirmation) */
+	double LastTextChangeTime = 0.0;
 
 	TAttribute<bool> bIsWaiting;
 	FOnInputAction OnSend;

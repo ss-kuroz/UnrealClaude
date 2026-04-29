@@ -12,21 +12,57 @@ class SScrollBox;
 class SVerticalBox;
 class SClaudeInputArea;
 class SExpandableArea;
+class SMarkdownWidget;
 
 /**
- * Chat message display widget
+ * Helper widget that wraps a scroll box and provides right-click drag scrolling
+ */
+class SRightClickDragBox : public SCompoundWidget
+{
+public:
+	SLATE_BEGIN_ARGS(SRightClickDragBox)
+	{}
+		SLATE_ARGUMENT(TSharedPtr<SScrollBox>, ScrollBox)
+		SLATE_DEFAULT_SLOT(FArguments, Content)
+	SLATE_END_ARGS()
+
+	void Construct(const FArguments& InArgs);
+
+	virtual FReply OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
+	virtual FReply OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
+	virtual FReply OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
+	virtual FReply OnMouseWheel(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
+	virtual TOptional<EMouseCursor::Type> GetCursor() const override;
+
+private:
+	TSharedPtr<SScrollBox> TargetScrollBox;
+	bool bIsDragging = false;
+	FVector2D DragStartMousePos;
+	float DragStartScrollOffset = 0.0f;
+};
+
+/**
+ * Chat message display widget with optional Markdown rendering
  */
 class SChatMessage : public SCompoundWidget
 {
 public:
 	SLATE_BEGIN_ARGS(SChatMessage)
 		: _IsUser(true)
+		, _bRenderMarkdown(true)
 	{}
 		SLATE_ARGUMENT(FString, Message)
 		SLATE_ARGUMENT(bool, IsUser)
+		SLATE_ARGUMENT(bool, bRenderMarkdown)
+		SLATE_ATTRIBUTE(bool, bSelectionMode)
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
+
+private:
+	TSharedPtr<SMarkdownWidget> MarkdownWidget;
+	bool bUseMarkdown = true;
+	TAttribute<bool> bSelectionModeAttr;
 };
 
 /**
@@ -94,6 +130,12 @@ private:
 
 	/** Input area widget */
 	TSharedPtr<SClaudeInputArea> InputArea;
+
+	/** Stored Claude message widgets for updating selection mode */
+	TArray<TSharedPtr<SMarkdownWidget>> ClaudeMessageWidgets;
+
+	/** Stored message texts for rebuilding on mode change */
+	TArray<TPair<FString, bool>> MessageHistory;  // Message text + IsUser flag
 
 	/** Current input text */
 	FString CurrentInputText;
@@ -170,6 +212,9 @@ private:
 	/** Include project context in prompts */
 	bool bIncludeProjectContext = true;
 
+	/** Selection mode for Claude responses (true = plain text for copying) */
+	bool bSelectionMode = false;
+
 	/** Handle streaming progress from Claude (legacy, still used for accumulation) */
 	void OnClaudeProgress(const FString& PartialOutput);
 
@@ -217,4 +262,13 @@ private:
 
 	/** Generate MCP tool status message for greeting */
 	FString GenerateMCPStatusMessage() const;
+
+	/** Rebuild all chat messages with current selection mode */
+	void RebuildChatMessages();
+
+	/** Check if scroll box is at or near the bottom */
+	bool IsScrolledToBottom() const;
+
+	/** Scroll to end (use when user was at bottom before content update) */
+	void ScrollToEnd();
 };
