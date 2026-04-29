@@ -1279,16 +1279,22 @@ bool SMarkdownWidget::IsTableSeparator(const FString& Line)
         return false;
     }
 
-    // Check content between pipes is only dashes and spaces
+    // Content between pipes may contain dashes, spaces, pipes, and ':' alignment markers (GFM).
     FString Content = Trimmed.Mid(1, Trimmed.Len() - 2);
+    bool bHasDash = false;
     for (int32 i = 0; i < Content.Len(); ++i)
     {
-        if (Content[i] != '-' && Content[i] != ' ' && Content[i] != '|')
+        const TCHAR Ch = Content[i];
+        if (Ch != '-' && Ch != ' ' && Ch != '|' && Ch != ':')
         {
             return false;
         }
+        if (Ch == '-')
+        {
+            bHasDash = true;
+        }
     }
-    return true;
+    return bHasDash;
 }
 
 TArray<FString> SMarkdownWidget::ParseTableRowCells(const FString& Line)
