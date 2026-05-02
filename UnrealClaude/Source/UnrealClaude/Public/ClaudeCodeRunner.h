@@ -85,6 +85,9 @@ private:
 	/** Report completion to callback on game thread */
 	void ReportCompletion(const FString& Output, bool bSuccess);
 
+	/** Create a wrapper script that injects Ollama env vars before launching Claude */
+	FString CreateEnvWrapperScript() const;
+
 	FClaudeRequestConfig CurrentConfig;
 	FOnClaudeResponse OnCompleteDelegate;
 	FOnClaudeProgress OnProgressDelegate;
@@ -159,6 +162,9 @@ private:
 	// Temp file paths for prompts (to avoid command line length limits)
 	FString SystemPromptFilePath;
 	FString PromptFilePath;
+
+	/** Cached wrapper script path to avoid regenerating on every request. */
+	mutable FString CachedWrapperPath;
 
 	/** Seconds of zero pipe activity before the watchdog fires the banner and diagnostic. */
 	static constexpr double SilenceWarningThresholdSeconds = 60.0;

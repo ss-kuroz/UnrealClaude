@@ -135,6 +135,26 @@ Always validate in `Execute()` before doing work:
 - `docs:` — Documentation updates
 - `refactor:` — Code refactoring without behavior changes
 
+## Ollama Integration
+
+The plugin automatically injects Ollama environment variables into every `claude` child process, so **you do not need to set them before launching the editor**.
+
+Injected variables:
+- `ANTHROPIC_AUTH_TOKEN=ollama`
+- `ANTHROPIC_API_KEY=` (empty)
+- `ANTHROPIC_BASE_URL=http://localhost:11434`
+- `ANTHROPIC_DEFAULT_OPUS_MODEL=kimi-k2.6:cloud`
+- `ANTHROPIC_DEFAULT_SONNET_MODEL=kimi-k2.6:cloud`
+- `ANTHROPIC_MODEL=kimi-k2.6:cloud`
+
+Implementation details:
+- **Wrapper script** (`FClaudeCodeRunner::CreateEnvWrapperScript`): Generates a per-platform wrapper (`%TEMP%/UnrealClaude/claude-wrapper.cmd` on Windows, `/tmp/UnrealClaude/claude-wrapper.sh` on Linux/Mac) that sets the env vars and then forwards all arguments to the real `claude` binary (`%*` / `"$@"`). The wrapper is cached in `CachedWrapperPath` and reused across requests.
+- **Async execution** (`FClaudeCodeRunner::LaunchProcess`): Spawns the wrapper script directly through `FPlatformProcess::CreateProc`, so the child process inherits the injected env vars. Stdin/stdout pipes still work because the wrapper transparently forwards I/O.
+- **Sync execution** (`FClaudeCodeRunner::ExecuteSync`): Uses the same wrapper script via `FPlatformProcess::ExecProcess`, avoiding inline shell escaping issues.
+- **Cleanup**: The wrapper script is deleted in the `~FClaudeCodeRunner` destructor. If the editor crashes, the OS temp directory janitor will eventually clean it up.
+
+If you want to override these defaults, you can still set the variables in your shell before launching the editor — the plugin's hardcoded values will take precedence for the child process. To change the injected values, edit `CreateEnvWrapperScript()` in `ClaudeCodeRunner.cpp`.
+
 ## Important File Locations
 
 - `UnrealClaude/Source/UnrealClaude/` — C++ plugin source

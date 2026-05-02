@@ -44,6 +44,12 @@ FClaudeCodeRunner::~FClaudeCodeRunner()
 
 	// NOW safe to cleanup handles (thread has exited)
 	CleanupHandles();
+
+	// Clean up temporary env wrapper script
+	if (!CachedWrapperPath.IsEmpty() && IFileManager::Get().FileExists(*CachedWrapperPath))
+	{
+		IFileManager::Get().Delete(*CachedWrapperPath, false, true);
+	}
 }
 
 void FClaudeCodeRunner::CleanupHandles()
@@ -203,6 +209,67 @@ FString FClaudeCodeRunner::GetClaudePath()
 	return CachedClaudePath;
 }
 
+FString FClaudeCodeRunner::CreateEnvWrapperScript() const
+{
+	if (!CachedWrapperPath.IsEmpty() && IFileManager::Get().FileExists(*CachedWrapperPath))
+	{
+		return CachedWrapperPath;
+	}
+
+	FString ClaudePath = GetClaudePath();
+	if (ClaudePath.IsEmpty())
+	{
+		return FString();
+	}
+
+	FString TempDir = FPlatformMisc::GetEnvironmentVariable(TEXT("TEMP"));
+	if (TempDir.IsEmpty())
+	{
+		TempDir = FPaths::ProjectSavedDir();
+	}
+	FString WrapperDir = FPaths::Combine(TempDir, TEXT("UnrealClaude"));
+	IFileManager::Get().MakeDirectory(*WrapperDir, true);
+
+	FString WrapperPath;
+	FString WrapperContent;
+
+#if PLATFORM_WINDOWS
+	WrapperPath = FPaths::Combine(WrapperDir, TEXT("claude-wrapper.cmd"));
+	WrapperContent = FString::Printf(
+		TEXT("@echo off\n")
+		TEXT("set ANTHROPIC_AUTH_TOKEN=ollama\n")
+		TEXT("set ANTHROPIC_API_KEY=\n")
+		TEXT("set ANTHROPIC_BASE_URL=http://localhost:11434\n")
+		TEXT("set ANTHROPIC_DEFAULT_OPUS_MODEL=kimi-k2.6:cloud\n")
+		TEXT("set ANTHROPIC_DEFAULT_SONNET_MODEL=kimi-k2.6:cloud\n")
+		TEXT("set ANTHROPIC_MODEL=kimi-k2.6:cloud\n")
+		TEXT("\"%s\" %%*\n"),
+		*ClaudePath);
+#else
+	WrapperPath = FPaths::Combine(WrapperDir, TEXT("claude-wrapper.sh"));
+	WrapperContent = FString::Printf(
+		TEXT("#!/bin/bash\n")
+		TEXT("export ANTHROPIC_AUTH_TOKEN=\"ollama\"\n")
+		TEXT("export ANTHROPIC_API_KEY=\"\"\n")
+		TEXT("export ANTHROPIC_BASE_URL=\"http://localhost:11434\"\n")
+		TEXT("export ANTHROPIC_DEFAULT_OPUS_MODEL=\"kimi-k2.6:cloud\"\n")
+		TEXT("export ANTHROPIC_DEFAULT_SONNET_MODEL=\"kimi-k2.6:cloud\"\n")
+		TEXT("export ANTHROPIC_MODEL=\"kimi-k2.6:cloud\"\n")
+		TEXT("exec \"%s\" \"$@\"\n"),
+		*ClaudePath);
+#endif
+
+	if (FFileHelper::SaveStringToFile(WrapperContent, *WrapperPath))
+	{
+		CachedWrapperPath = WrapperPath;
+		UE_LOG(LogUnrealClaude, Log, TEXT("Created env wrapper script: %s"), *WrapperPath);
+		return CachedWrapperPath;
+	}
+
+	UE_LOG(LogUnrealClaude, Warning, TEXT("Failed to create env wrapper script at: %s"), *WrapperPath);
+	return ClaudePath;
+}
+
 bool FClaudeCodeRunner::ExecuteAsync(
 	const FClaudeRequestConfig& Config,
 	FOnClaudeResponse OnComplete,
@@ -270,9 +337,18 @@ bool FClaudeCodeRunner::ExecuteSync(const FClaudeRequestConfig& Config, FString&
 		WorkingDir = FPaths::ProjectDir();
 	}
 
+	// Use wrapper script so env vars are injected without inline shell escaping issues
+	FString ExePath = CreateEnvWrapperScript();
+	FString Params = CommandLine;
+	if (ExePath.IsEmpty() || ExePath == ClaudePath)
+	{
+		// Wrapper creation failed — fall back to direct execution (no env injection)
+		ExePath = ClaudePath;
+	}
+
 	bool bSuccess = FPlatformProcess::ExecProcess(
-		*ClaudePath,
-		*CommandLine,
+		*ExePath,
+		*Params,
 		&ReturnCode,
 		&StdOut,
 		&StdErr,
@@ -1214,12 +1290,35 @@ bool FClaudeCodeRunner::CreateProcessPipes()
 bool FClaudeCodeRunner::LaunchProcess(const FString& FullCommand, const FString& WorkingDir)
 {
 	FString ClaudePath = GetClaudePath();
+	FString WrapperPath = CreateEnvWrapperScript();
+	if (WrapperPath.IsEmpty())
+	{
+		WrapperPath = ClaudePath;
+	}
 
 	// FPlatformProcess::CreateProc takes the URL (executable) and Params separately
-	FString Params = FullCommand;
+	FString ExePath;
+	FString Params;
+
+	if (WrapperPath != ClaudePath)
+	{
+		// Use wrapper script so Ollama env vars are injected into the child process
+#if PLATFORM_WINDOWS
+		ExePath = TEXT("cmd.exe");
+		Params = FString::Printf(TEXT("/c \"%s\" %s"), *WrapperPath, *FullCommand);
+#else
+		ExePath = TEXT("/bin/sh");
+		Params = FString::Printf(TEXT("\"%s\" %s"), *WrapperPath, *FullCommand);
+#endif
+	}
+	else
+	{
+		ExePath = ClaudePath;
+		Params = FullCommand;
+	}
 
 	ProcessHandle = FPlatformProcess::CreateProc(
-		*ClaudePath,
+		*ExePath,
 		*Params,
 		false,    // bLaunchDetached
 		false,    // bLaunchHidden
@@ -1234,7 +1333,8 @@ bool FClaudeCodeRunner::LaunchProcess(const FString& FullCommand, const FString&
 	if (!ProcessHandle.IsValid())
 	{
 		UE_LOG(LogUnrealClaude, Error, TEXT("Failed to create Claude process"));
-		UE_LOG(LogUnrealClaude, Error, TEXT("Claude Path: %s"), *ClaudePath);
+		UE_LOG(LogUnrealClaude, Error, TEXT("Exe Path: %s"), *ExePath);
+		UE_LOG(LogUnrealClaude, Error, TEXT("Wrapper Path: %s"), *WrapperPath);
 		UE_LOG(LogUnrealClaude, Error, TEXT("Params: %s"), *Params);
 		UE_LOG(LogUnrealClaude, Error, TEXT("Working directory: %s"), *WorkingDir);
 		return false;
