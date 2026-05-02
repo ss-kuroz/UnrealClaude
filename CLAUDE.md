@@ -135,6 +135,26 @@ Always validate in `Execute()` before doing work:
 - `docs:` — Documentation updates
 - `refactor:` — Code refactoring without behavior changes
 
+## Ollama Integration
+
+The plugin automatically injects Ollama environment variables into every `claude` child process, so **you do not need to set them before launching the editor**.
+
+Injected variables:
+- `ANTHROPIC_AUTH_TOKEN=ollama`
+- `ANTHROPIC_API_KEY=` (empty)
+- `ANTHROPIC_BASE_URL=http://localhost:11434`
+- `ANTHROPIC_DEFAULT_OPUS_MODEL=kimi-k2.6:cloud`
+- `ANTHROPIC_DEFAULT_SONNET_MODEL=kimi-k2.6:cloud`
+- `ANTHROPIC_MODEL=kimi-k2.6:cloud`
+
+Implementation details:
+- **Env var injection** (`FPlatformMisc::SetEnvironmentVar`): The plugin sets the Ollama env vars in the current process (UE Editor) right before spawning `claude`. Child processes inherit them automatically via OS inheritance. Old values are restored immediately after spawn.
+- **Async execution** (`FClaudeCodeRunner::LaunchProcess`): `claude` is spawned directly via `FPlatformProcess::CreateProc` with pipes, so stdin/stdout streaming works natively.
+- **Sync execution** (`FClaudeCodeRunner::ExecuteSync`): Uses `FPlatformProcess::ExecProcess` directly on `claude`.
+- **No wrapper scripts**: Removed to avoid stdin forwarding issues with intermediate `cmd.exe` / `sh` processes.
+
+If you want to override these defaults, set the variables in your shell before launching the editor. The plugin saves and restores old values, so your shell settings will not be permanently overwritten. To change the injected values, edit the `FOllamaEnvScope` struct in `ClaudeCodeRunner.cpp`.
+
 ## Important File Locations
 
 - `UnrealClaude/Source/UnrealClaude/` — C++ plugin source

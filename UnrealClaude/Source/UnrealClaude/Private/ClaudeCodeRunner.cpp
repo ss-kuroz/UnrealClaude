@@ -18,6 +18,51 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Dom/JsonObject.h"
+#include "HAL/PlatformMisc.h"
+
+namespace
+{
+	/**
+	 * RAII scope that injects Ollama env vars into the current process
+	 * so child processes (claude CLI) inherit them. Restores old values on destruction.
+	 */
+	struct FOllamaEnvScope
+	{
+		FString OldAuthToken;
+		FString OldApiKey;
+		FString OldBaseUrl;
+		FString OldOpusModel;
+		FString OldSonnetModel;
+		FString OldModel;
+
+		FOllamaEnvScope()
+		{
+			OldAuthToken = FPlatformMisc::GetEnvironmentVariable(TEXT("ANTHROPIC_AUTH_TOKEN"));
+			OldApiKey = FPlatformMisc::GetEnvironmentVariable(TEXT("ANTHROPIC_API_KEY"));
+			OldBaseUrl = FPlatformMisc::GetEnvironmentVariable(TEXT("ANTHROPIC_BASE_URL"));
+			OldOpusModel = FPlatformMisc::GetEnvironmentVariable(TEXT("ANTHROPIC_DEFAULT_OPUS_MODEL"));
+			OldSonnetModel = FPlatformMisc::GetEnvironmentVariable(TEXT("ANTHROPIC_DEFAULT_SONNET_MODEL"));
+			OldModel = FPlatformMisc::GetEnvironmentVariable(TEXT("ANTHROPIC_MODEL"));
+
+			FPlatformMisc::SetEnvironmentVar(TEXT("ANTHROPIC_AUTH_TOKEN"), TEXT("ollama"));
+			FPlatformMisc::SetEnvironmentVar(TEXT("ANTHROPIC_API_KEY"), TEXT(""));
+			FPlatformMisc::SetEnvironmentVar(TEXT("ANTHROPIC_BASE_URL"), TEXT("http://localhost:11434"));
+			FPlatformMisc::SetEnvironmentVar(TEXT("ANTHROPIC_DEFAULT_OPUS_MODEL"), TEXT("kimi-k2.6:cloud"));
+			FPlatformMisc::SetEnvironmentVar(TEXT("ANTHROPIC_DEFAULT_SONNET_MODEL"), TEXT("kimi-k2.6:cloud"));
+			FPlatformMisc::SetEnvironmentVar(TEXT("ANTHROPIC_MODEL"), TEXT("kimi-k2.6:cloud"));
+		}
+
+		~FOllamaEnvScope()
+		{
+			FPlatformMisc::SetEnvironmentVar(TEXT("ANTHROPIC_AUTH_TOKEN"), *OldAuthToken);
+			FPlatformMisc::SetEnvironmentVar(TEXT("ANTHROPIC_API_KEY"), *OldApiKey);
+			FPlatformMisc::SetEnvironmentVar(TEXT("ANTHROPIC_BASE_URL"), *OldBaseUrl);
+			FPlatformMisc::SetEnvironmentVar(TEXT("ANTHROPIC_DEFAULT_OPUS_MODEL"), *OldOpusModel);
+			FPlatformMisc::SetEnvironmentVar(TEXT("ANTHROPIC_DEFAULT_SONNET_MODEL"), *OldSonnetModel);
+			FPlatformMisc::SetEnvironmentVar(TEXT("ANTHROPIC_MODEL"), *OldModel);
+		}
+	};
+}
 
 FClaudeCodeRunner::FClaudeCodeRunner()
 	: Thread(nullptr)
@@ -270,14 +315,18 @@ bool FClaudeCodeRunner::ExecuteSync(const FClaudeRequestConfig& Config, FString&
 		WorkingDir = FPaths::ProjectDir();
 	}
 
-	bool bSuccess = FPlatformProcess::ExecProcess(
-		*ClaudePath,
-		*CommandLine,
-		&ReturnCode,
-		&StdOut,
-		&StdErr,
-		*WorkingDir
-	);
+	bool bSuccess = false;
+	{
+		FOllamaEnvScope EnvScope;
+		bSuccess = FPlatformProcess::ExecProcess(
+			*ClaudePath,
+			*CommandLine,
+			&ReturnCode,
+			&StdOut,
+			&StdErr,
+			*WorkingDir
+		);
+	}
 
 	if (bSuccess && ReturnCode == 0)
 	{
@@ -1404,7 +1453,13 @@ void FClaudeCodeRunner::ExecuteProcess()
 	UE_LOG(LogUnrealClaude, Log, TEXT("Full command: %s %s"), *ClaudePath, *CommandLine);
 	UE_LOG(LogUnrealClaude, Log, TEXT("Working directory: %s"), *WorkingDir);
 
-	if (!LaunchProcess(CommandLine, WorkingDir))
+	bool bLaunched = false;
+	{
+		FOllamaEnvScope EnvScope;
+		bLaunched = LaunchProcess(CommandLine, WorkingDir);
+	}
+
+	if (!bLaunched)
 	{
 		CleanupHandles();
 
